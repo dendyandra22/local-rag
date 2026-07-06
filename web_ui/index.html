@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Manga RAG Chat</title>
+    <link rel="stylesheet" href="/static/styles.css">
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar" aria-label="Chat history">
+        <div class="brand">
+          <div class="brand-mark">R</div>
+          <div>
+            <strong>Manga RAG</strong>
+            <span>Local assistant</span>
+          </div>
+        </div>
+
+        <button id="newChatButton" class="new-chat-button" type="button">
+          <span aria-hidden="true">+</span>
+          New chat
+        </button>
+
+        <div class="sidebar-section">
+          <p class="sidebar-label">Try asking</p>
+          <button class="prompt-chip" type="button">Recommend manga like Berserk</button>
+          <button class="prompt-chip" type="button">Who wrote One Piece?</button>
+          <button class="prompt-chip" type="button">Give me action manga recommendations</button>
+        </div>
+
+        <div class="status-panel">
+          <span id="statusDot" class="status-dot"></span>
+          <span id="statusText">Checking API...</span>
+        </div>
+      </aside>
+
+      <main class="chat-panel">
+        <header class="topbar">
+          <div>
+            <h1>Manga RAG Chat</h1>
+            <p>Ask your local retrieval assistant about manga metadata and recommendations.</p>
+          </div>
+        </header>
+
+        <section id="messages" class="messages" aria-live="polite">
+          <div class="empty-state">
+            <div class="empty-icon">R</div>
+            <h2>What manga are we exploring?</h2>
+            <p>Ask for recommendations, authors, ratings, genres, or similar titles from your local RAG database.</p>
+          </div>
+        </section>
+
+        <form id="chatForm" class="composer">
+          <textarea
+            id="messageInput"
+            name="message"
+            rows="1"
+            placeholder="Message Manga RAG..."
+            autocomplete="off"
+          ></textarea>
+          <button id="sendButton" type="submit" aria-label="Send message">
+            <span aria-hidden="true">↑</span>
+          </button>
+        </form>
+      </main>
+    </div>
+
+    <script src="/static/app.js"></script>
+  </body>
+</html>

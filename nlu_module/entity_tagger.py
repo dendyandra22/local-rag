@@ -1,10 +1,11 @@
 import re
+import sklearn_crfsuite
 
+from util.logger import print_log
 
-def ent2bio(data: dict, verbose: bool = False):
+def ent2bio(data: list, verbose: bool = False):
     bio_data = []
-
-    for sample in data["examples"]:
+    for sample in data:
         if verbose:
             print(sample)
         matches = re.findall(r"\[(.*?)\]", sample)
@@ -114,3 +115,39 @@ def word2features(sent, i):
 def sent2features(sent):
     return [word2features(sent, i)
             for i in range(len(sent))]
+
+def train_ner(nlu_data: dict, verbose: bool = False):
+    if verbose: print_log('[train_ner] loading training data')
+    ent_data = []
+    for data in nlu_data['data']:
+        ent_data.extend(data['examples'])
+
+    bio_data = ent2bio(ent_data)
+    x_train = [
+        sent2features(tokens)
+        for tokens, labels in bio_data
+    ]
+    y_train = [
+        labels
+        for tokens, labels in bio_data
+    ]
+
+    if verbose: print_log('[train_ner] training ner model')
+    crf = sklearn_crfsuite.CRF(
+        algorithm='lbfgs',
+        c1=0.1,
+        c2=0.1,
+        max_iterations=100,
+        all_possible_transitions=True
+    )
+
+    crf.fit(x_train, y_train)
+    if verbose: print_log(f'train_ner] ner model: {crf}')
+
+    return crf
+
+def predict_ner(ner_model, text) -> list:
+    tokens = text.split()
+    features = sent2features(tokens)
+    pred = ner_model.predict([features])[0]
+    return bio2ent(tokens, pred)

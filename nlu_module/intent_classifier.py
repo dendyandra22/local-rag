@@ -3,28 +3,13 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.linear_model import LogisticRegression
 from sklearn.pipeline import Pipeline
 from sklearn.svm import SVC
+import re
 
+from util.logger import print_log
 
-def train_intent_model(data: dict, verbose: bool):
-    model_name = data["model"]
+def model_selector(model_name):
     model = None
-    x_train = []
-    y_train = []
-
-    for sample in data["data"]:
-        x_train.extend(sample["examples"])
-        y_train.extend([sample["intent"]] * len(sample["examples"]))
-
-        if len(x_train) != len(y_train):
-            print("NOT SAME!!!", len(x_train), len(y_train))
-            return
-
-    if verbose:
-        print("total data", len(x_train))
-
     if model_name == "lsvc":
-        if verbose:
-            print("train lsvc")
         model = Pipeline([
             ("tfidf", TfidfVectorizer(
                 ngram_range=(1, 2),
@@ -32,19 +17,39 @@ def train_intent_model(data: dict, verbose: bool):
             )),
             ("clf", SVC(kernel="linear", probability=True, random_state=42))
         ])
-        model.fit(x_train, y_train)
+
 
     elif model_name == "lgs":
-        if verbose:
-            print("train lgs")
         model = Pipeline([
             ("tfidf", TfidfVectorizer(
                 ngram_range=(1, 2),
                 min_df=2
             )),
-            ("clf", LogisticRegression(multi_class="multinomial", solver="lbfgs"))
+            ("clf", LogisticRegression(solver="lbfgs"))
         ])
-        model.fit(x_train, y_train)
+
+    return model
+
+def train_intent(data: dict, verbose: bool):
+    model_name = data["model"] if data["model"] != 'default' else 'lgs'
+    model = None
+    x_train = []
+    y_train = []
+
+    for sample in data["data"]:
+        clean_text  = [re.sub(r'\[([^\]]+)\]\([^)]+\)', r'\1', text) for text in sample["examples"]]
+        x_train.extend(clean_text)
+        y_train.extend([sample["intent"]] * len(clean_text))
+
+        if len(x_train) != len(y_train):
+            if verbose: print_log('[train_intent] ERROR! diff len x_train and y_train')
+            return None
+
+    if verbose: print_log(f'[train_intent] train {model_name}')
+    model = model_selector(model_name)
+    model.fit(x_train, y_train)
+
+    if verbose: print_log(f'train_intent] intent model: {model}')
 
     return model
 

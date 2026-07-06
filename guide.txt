@@ -1,0 +1,22 @@
+1. run ollama apps 
+2. run this in powershell to connect to py apps ON SAME CMD!!!
+set RAG_CHAT_HANDLER=rag_module/rag_controller:response_handler && python ./web_chat.py
+
+
+                User Query
+                     │
+                     ▼
+             Query Router
+              /       \
+             /         \
+            ▼           ▼
+      SQLite Search  Vector Search
+            │           │
+            └─────┬─────┘
+                  ▼
+             Ollama LLM
+                  ▼
+                Answer
+
+
+curl -N http://127.0.0.1:8000/chat -H "Content-Type: application/json" -d "{\"message\":\"recommend manga like Berserk\"}"

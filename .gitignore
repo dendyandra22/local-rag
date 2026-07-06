@@ -1,0 +1,6 @@
+/dataset
+/data
+/chat_history
+/model
+__pycache__/
+*.pyc
