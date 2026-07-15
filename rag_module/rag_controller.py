@@ -1,19 +1,177 @@
 import re
+from pathlib import Path
+import pandas as pd
+from ollama import chat
 
-from rag_module.response import Response
+from nlu_module.nlu_component import NLUComponent
+# from rag_module.response import Response
+from util.logger import print_log
+from database_module.vectordb import VectorDB
+from database_module.sqldb import SQLDB
 
-class RAGController:
+SUPPORTED_INFERENCE = ["ollama", 'huggingface']
+SUPPORTED_DATASET_EXTENSIONS = {".csv", ".xls", ".xlsx"}
+
+class RAGModel:
     def __init__(self,
-                 db_name: str,
-                 timestamp: str,
-                 inference_type: str = None,
-                 retrain_model: bool = False,
+                 rag_name: str,
+                 nlu_name: str | None,
+                 inference_type: str | None,
                  ):
-        inference_type = inference_type if inference_type else 'ollama'
-        self.response = Response(db_name, timestamp, inference_type, retrain_model)
-        self.nlu_model = self.response.nlu_model
+        self.rag_name = rag_name
+        self.nlu_name = nlu_name
+        self.inference_type = inference_type if inference_type in SUPPORTED_INFERENCE else 'ollama'
+        # self.llm = None
+        self.sql_db = None
+        self.vec_db = None
+        self.connect_rag_db()
+        self.nlu = NLUComponent(self.nlu_name, retrain_model=False) if nlu_name else None
+
+    def connect_rag_db(self):
+        sql, vec = None, None
+        try:
+            sql = SQLDB(self.rag_name)
+            vec = VectorDB(self.rag_name)
+            sql.connect_db()
+            vec.connect_db()
+
+        except Exception as e:
+            print_log(str(e))
+
+        else:
+            print_log("successfully connected to RAG database")
+
+        # return sql, vec
+        self.sql_db = sql
+        self.vec_db = vec
+
+    def rebuild_rag(self, df: pd.DataFrame, retrain_nlu: bool = True):
+        sql, vec, nlu = None, None, None
+        try:
+            sql = SQLDB(self.rag_name).create_db(df)
+            vec = VectorDB(self.rag_name).create_db(df)
+            if retrain_nlu:
+                nlu = NLUComponent(self.nlu_name, retrain_model=retrain_nlu)
+        except Exception as e:
+            print_log(str(e))
+
+        return sql, vec, nlu
+        # self.sql_db = sql
+        # self.vec_db = vec
+        # self.nlu = nlu
+
+    @staticmethod
+    def read_tabular_dataset(source_path: str | Path) -> pd.DataFrame:
+        path = Path(source_path)
+        extension = path.suffix.lower()
+
+        if extension == ".csv":
+            return pd.read_csv(path)
+
+        if extension in {".xls", ".xlsx"}:
+            return pd.read_excel(path)
+
+        supported = ", ".join(sorted(SUPPORTED_DATASET_EXTENSIONS))
+        raise ValueError(f"Unsupported dataset file type. Use one of: {supported}")
+    
+    def ollama_generate_chat(self, context, sys_prompt, stream=False):
+        response = None
+
+        if self.inference_type == 'ollama':
+
+            template_message = [
+                {
+                    'role': 'system',
+                    'content': sys_prompt
+                },
+                {
+
+                    'role': 'user',
+                    'content': context,
+                },
+            ]
+
+            # print('TEMPLATE MESSAGE', template_message)
+
+            response = chat(model='gemma3:4b',
+                            messages=template_message,
+                            stream=stream,
+                            # options={
+                            #     # 'temperature': 0.7,
+                            #     # Bumps creativity and conversational flow (default is often too low)
+                            #     # 'repeat_penalty': 1.0,  # Prevents it from getting stuck looping phrases
+                            #     'num_predict': 256  # Encourages a decent length response
+                            # }
+                            )
+
+        return response
+
+
+
+
+
+
+class RAGAction(RAGModel):
+    def __init__(self,
+                 rag_name: str | None = None,
+                 nlu_model_name: str | None = None,
+                 inference_type: str | None = None,
+                 ):
+        super().__init__(rag_name, nlu_model_name, inference_type)
+
+    def _verify_rag_available(self):
+        """Raises an error if the model isn't configured."""
+        # if self.nlu is None or self.sql_db is None or self.vec_db is None:
+        #     raise AttributeError('RAG model components are not initialized.')
+
+        if self.nlu is None:
+            raise AttributeError('RAG NLU components are not initialized.')
+        if self.sql_db is None:
+            raise AttributeError('RAG SQL DB components are not initialized.')
+        if self.vec_db is None:
+            raise AttributeError('RAG VEC DB components are not initialized.')
+
+
+    @staticmethod
+    def _clean_text(text):
+        text = re.sub(r"\(Source:.*?\)", " ", text)
+        text = re.sub(r"\s+", " ", text).strip()
+
+        return text
+
+    def create_rag_from_dataset(self, source_path: str, 
+                                col_list: list[str],
+                                max_rows: int | None = None,
+                                drop_cols: list[str] | None = None,
+                                retrain_nlu: bool = True,
+                                ):
+        print_log("create rag from dataset")
+        df = self.read_tabular_dataset(source_path)
+        max_rows = max_rows if isinstance(max_rows, int) else df.shape[0]
+        print_log(f"{max_rows} rows data selected")
+        
+        if isinstance(drop_cols, list):
+            df.dropna(subset=drop_cols, inplace=True)
+            print_log("dropping unused columns")
+            # df.dropna(subset=['title', 'score', 'authors', 'genres', 'themes', 'synopsis'], inplace=True)
+
+        df['synopsis'] = df['synopsis'].apply(lambda x: self._clean_text(x))
+       
+        self.sql_db = SQLDB(self.rag_name).create_db(df)
+
+        df = df.loc[:max_rows, col_list]
+        df['authors'] = df['authors'].apply(lambda x: x.replace('|', '\n'))
+        df['genres'] = df['genres'].apply(lambda x: x.replace('|', '\n'))
+        df['themes'] = df['themes'].apply(lambda x: x.replace('|', '\n'))
+        
+        self.vec_db = VectorDB(self.rag_name).create_db(df)
+        
+        if retrain_nlu:
+            self.nlu = NLUComponent(self.nlu_name, retrain_model=retrain_nlu)
+            
 
     def _metadata_lookup_query(self, message, sort_rating=True):
+        self._verify_rag_available()
         query_filter = ''
         message = re.sub(
             r'\b(?:by\s+author|with\s+author|have\s+author|written\s+by|created\s+by|illustrated\s+by)\b',
@@ -31,21 +189,21 @@ class RAGController:
 
         if m:
             # print(m.group(1))
-            possible_title = [f'{ent[1]}' for ent in self.nlu_model.predict_ner(m.group(1)) if ent[0] == 'MANGA_ENT']
+            possible_title = [f'{ent[1]}' for ent in self.nlu.predict_ner(m.group(1)) if ent[0] == 'MANGA_ENT']
             tmp_string = 'by ' + m.group(2)
             # print(tmp_string)
-            possible_authors = [f'{ent[1]}' for ent in self.nlu_model.predict_ner(tmp_string) if ent[0] == 'MANGA_ENT']
+            possible_authors = [f'{ent[1]}' for ent in self.nlu.predict_ner(tmp_string) if ent[0] == 'MANGA_ENT']
 
         else:
-            possible_title = [f'{ent[1]}' for ent in self.nlu_model.predict_ner(message) if ent[0] == 'MANGA_ENT']
+            possible_title = [f'{ent[1]}' for ent in self.nlu.predict_ner(message) if ent[0] == 'MANGA_ENT']
 
         print('possible_title',possible_title)
         # print(m)
         print('possible_authors',possible_authors)
 
         if possible_title:
-            query_filter = query_filter + f'''\'(title:"{possible_title[0]}"'''
-            query_filter = query_filter + f''' OR title_english:"{possible_title[0]}")'''
+            query_filter = query_filter + f'''\'title:"{possible_title[0]}"'''
+            query_filter = query_filter + f''' OR title_english:"{possible_title[0]}"'''
 
         if possible_authors:
             if possible_title:
@@ -61,114 +219,241 @@ class RAGController:
             query_filter = query_filter + 'ORDER BY score DESC'
         return query_filter
 
+    @staticmethod
+    def _metadata_query_search(metadata_target: dict, search_col: list[str], sort_rating: bool) -> str:
+        query_filter = f"""\'"""
+        first_key = True
+        tmp = ""
+        for k, v in metadata_target.items():
+            if k not in search_col:
+                continue
+            v = v.replace('"', '\\"')
+            if first_key:
+                tmp = f"{k}:\"{v}\""
+                first_key = False
+            else:
+                tmp = tmp + f" OR {k}:\"{v}\""
 
-    def response_handler(self, message, stream=False, verbose=False, chat_history=None):
+        query_filter = query_filter + tmp + "\'"
+        if sort_rating:
+            query_filter = query_filter + "ORDER BY score DESC"
+
+        return query_filter
+
+    @staticmethod
+    def _get_chat_history(chat_history:list[dict]|None, past_limit: int = 5):
+
+        if not chat_history:
+            context = f"""
+                    <CONVERSATION_HISTORY>
+                    No history data.
+                    </CONVERSATION_HISTORY>"""
+
+            return context
+
+        recent_history = chat_history[-past_limit:]
+        history_lines = []
+        for item in recent_history:
+            role = item.get('role', 'user')
+            content = item.get('content', '')
+            if content:
+                history_lines.append(f'{role}: {content}')
+
+        if not history_lines:
+            context = f"""
+                                <CONVERSATION_HISTORY>
+                                No history data.
+                                </CONVERSATION_HISTORY>"""
+
+            return context
+
+        temp_text = '\n'.join(history_lines)
+        context = f"""
+        <CONVERSATION_HISTORY>
+        {temp_text}
+        </CONVERSATION_HISTORY>"""
+
+        return context
+
+    def response_handler(self, message: str, stream: bool=False, verbose: bool=False, chat_history: list[dict]|None=None):
+        self._verify_rag_available()
         context = ''
         sys_prompt = '''
              You are RAG chatbot about manga. You will be given context about manga and user question. Give answer based on context.
         '''.strip()
-        intent = self.response.nlu_model.predict_intent(message)
-        ner = self.response.nlu_model.predict_ner(message)
+        intent = self.nlu.predict_intent(message)
+        ner = self.nlu.predict_ner(message)
         print('intent', intent)
         print('ner', ner)
 
         if intent in ['metadata_lookup']:
             if verbose: print('RH-1')
             sys_prompt = '''
-                         You are RAG chatbot about manga. You will be given context about manga and user question. Give answer based on context. Do not give outside the context given.
+                         You are MangaBot, a friendly and knowledgeable manga assistant.
+
+                        Your task is:
+                        - Answer user question based on TARGET_MANGA section.
+                        - If there is no data, do not add your own knowledge.
+
 
                          '''.strip()
             print('sql side')
-            context = '''Context:\n\n'''
             query_filter = self._metadata_lookup_query(message)
             print('query_filter1', query_filter)
             if query_filter == '':
                 if verbose: print('RH-1a')
-                context = context + 'No context provided'
+                context = "Manga Metadata: No Data"
             else:
                 if verbose: print('RH-1b')
-                context = context + self.response.get_from_sql(query_filter, use_fts=True, return_context=True, limit=5)
+                # context = context + self.get_from_sql(query_filter, use_fts=True, return_context=True, limit=5)
+                target_metadata = "No Data"
+                tmp = self.sql_db.search_sql(query_filter, use_fts=True, return_context=False, limit=1)
+                if tmp:
+                    target_metadata = context + '\n'.join([f'{k}:{self._clean_text(str(v))}' for k, v in tmp[0].items() if k not in ['mal_id']])
+
+                context = f"""
+                <TARGET_MANGA>
+                {target_metadata}
+                </TARGET_MANGA>
+                
+                <USER_QUESTION>
+                {message}
+                </USER_QUESTION>
+                """
 
 
-        elif intent in ['general','recommendation']:
+        elif intent in ['recommendation']:
             if verbose: print('RH-2')
-            # sys_prompt = '''
-            #             You are a manga recommendation assistant.
-            #
-            #             You retrieve Target Recommend contain manga that user like, and Relevant Context contain similar manga.
-            #             Recommend the manga in Relevant Context by explain metadata and reason why they may be relevant for user.
-            #             If no Target Recommend data, politely explain to user and ask to give more specific or detail about manga they like.
-            #              '''.strip()
+            manga_recs_col = ["title","title_english","published_from", "score","authors","genres", "themes", "synopsis"]
+            manga_tar_col = ["title","title_english","genres", "themes"]
+            manga_search_col = ["genres", "themes"]
+
             sys_prompt = """
-            You are a manga recommendation assistant.
-
-            You will receive two sections:
-
-            1. Target Manga
-            - The manga that the user likes or is asking about.
-            - This section may be empty.
-
-            2. Relevant Context
-            - A list of manga retrieved from the database because they are semantically similar to the Target Manga or the user's request.
-
-            Instructions:
-            - Recommend only manga from the Relevant Context.
-            - Briefly describe each recommendation using its available metadata (such as genres, themes, score, synopsis, or author).
-            - Explain why each recommendation may appeal to the user based on similarities to the Target Manga or the user's request.
-            - Do not invent manga or information that is not present in the context.
-            - If Relevant Context is empty, politely state that no suitable recommendations were found.
-            - If Target Manga is empty, ask the user to mention a manga they enjoy or describe the type of manga they are looking for.
-            - Format the answer as a friendly recommendation list.
+            You are NOT a recommendation engine.
+            The recommendation engine has already selected the manga.
+            Your job is ONLY to explain why each recommendation fits.
+            You must never replace the retrieved recommendations.
+            You must never invent additional manga.
+            If you mention a manga title that is not inside <RECOMMENDED_MANGA>, your answer is incorrect.
             """.strip()
-            # context = '''Relevant context:\n\n'''
+            # context = ""
 
             query_filter = self._metadata_lookup_query(message, sort_rating=False)
             print('query_filter2', query_filter)
             if query_filter == '':
                 if verbose: print('RH-2a')
-                context = 'Target Recommend:\n\nUnable to search target manga.'
+                context = """
+                <TARGET_MANGA>
+                Unable to search target manga.
+                </TARGET_MANGA>
+                """
             else:
-                if verbose: print('RH-2b')
-                tmp = self.response.get_from_sql(query_filter, use_fts=True, return_context=False, limit=1)
-                if len(tmp) > 0:
-                    if verbose: print('RH-2b1')
-                    target_recs_ids = tmp[0]['mal_id']
-                    target_recs = '\n'.join([f'{k}:{v}' for k, v in tmp[0].items()])
-                    print('target_recs_ids ->',target_recs_ids)
+                if verbose: print("RH-2b")
+                target_manga_metadata = self.sql_db.search_sql(query_filter, use_fts=True, return_context=False, limit=1)
+                if len(target_manga_metadata) > 0:
+                    if verbose: print("RH-2b1")
+                    target_manga_metadata = target_manga_metadata[0]
+                    target_recs_ids = target_manga_metadata['mal_id']
+                    target_recs = ' '.join([f'{k}:{self._clean_text(str(v))}' for k, v in target_manga_metadata.items() if k in manga_tar_col])
+                    # print('target_recs_ids ->',target_recs_ids)
 
-                    tmp = self.response.get_from_vectordb(target_recs, k=5, return_context=False)
-                    # drop first idx to remove target manga included in relevant context
-                    # tmp = tmp[1:]
+                    # query_filter3 = self._metadata_query_search(target_manga_metadata, manga_search_col, sort_rating=False)
+                    # print('query_filter3', query_filter3)
+                    # relevant_manga_metadata = self.get_from_sql(query_filter3, use_fts=True, return_context=False, limit=5)
 
+                    relevant_manga_metadata = self.vec_db.search_vector(target_recs, k=10, return_context=False)
                     relevant_context = ''
-                    for i,tmp_data in enumerate(tmp):
+                    i = 0
+                    for tmp_data in relevant_manga_metadata:
                         if target_recs_ids == tmp_data['mal_id']:
+                            # skip target manga included in relevant context
                             continue
 
-                        relevant_context = relevant_context + f'{i + 1}.\n'
+                        relevant_context = relevant_context + f'Recommendation #{i + 1}.\n'
                         for k, v in tmp_data.items():
-                            relevant_context = relevant_context + f'{k}:{v}\n'
+                            if k in manga_recs_col:
+                                relevant_context = relevant_context + f'{k}:{self._clean_text(str(v))}\n'
                         relevant_context = relevant_context + '\n'
+                        i += 1
 
                     # relevant_context = '\n'.join(f'{k}:{v}' for tmp_data in tmp for k, v in tmp_data.items())
-                    print('relevant_context->', len(relevant_context), '|', relevant_context)
-                    context = context + f'Target Recommend:\n\n{target_recs}\n\n Relevant Context:\n\n{relevant_context}'
+                    # print('relevant_context->', len(relevant_context), '|', relevant_context)
+                    context =f"""
+                    <TARGET_MANGA>
+                    {target_recs}
+                    </TARGET_MANGA>
+                    
+                    <RECOMMENDED_MANGA>
+                    {relevant_context}
+                    </RECOMMENDED_MANGA>
+                    
+                    <USER_QUESTION>
+                    {message}
+                    </USER_QUESTION>
+                    """
 
                 else:
                     if verbose: print('RH-2b2')
-                    context = 'Target Recommend:\n\nTarget manga data not available.'
+                    context  = f"""
+                    <TARGET_MANGA>
+                    Unable to search target manga data.
+                    </TARGET_MANGA>
+                    
+                    <RECOMMENDED_MANGA>
+                    Unable to give relevant manga data.
+                    </RECOMMENDED_MANGA>
+                    
+                    <USER_QUESTION>
+                    {message}
+                    </USER_QUESTION>
+                    """
+
+        else:
+            if verbose: print('RH-Default')
+
+            sys_prompt = """
+            You are MangaBot, a friendly and knowledgeable manga assistant.
+
+            Your personality:
+            - Be friendly and conversational.
+            - Answer naturally, like chatting with another manga fan.
+            - Give complete answers instead of one short sentence.
+            - When appropriate, add a little extra helpful information.
+            - Be enthusiastic about manga, but do not invent facts.
+            - If the user asks casual questions (such as "Who are you?" or "How are you?"), respond naturally instead of redirecting to manga.
+            - Keep responses around 2–5 sentences unless the user requests more detail.
+            
+            Your task is:
+            - Response to user question/chat under USER_QUESTION section.
+            - You may use CONVERSATION_HISTORY to read context if available. 
+            """.strip()
+
+            context = f"""
+            <USER_QUESTION>
+            {message}
+            </USER_QUESTION>
+            """
+        # return context
+        # context = self._clean_text(context)
+
+        if chat_history:
+            chat_hist = self._get_chat_history(chat_history)
+            context = chat_hist + '\n' + context
+
+        print('####### context ######')
+        print(context)
 
         if stream:
             if verbose: print('RH-STREAM')
             def _response_generator():
-                result = self.response.generate_chat(message, context, sys_prompt, stream=stream, chat_history=chat_history)
+                result = self.ollama_generate_chat(context, sys_prompt, stream=stream)
                 for chunk in result:
                     yield chunk['message']['content']
 
             return _response_generator()
         else:
             if verbose: print('RH-FULLTEXT')
-            result = self.response.generate_chat(message, context, sys_prompt, stream=stream, chat_history=chat_history)['message']['content']
+            gen_text = self.ollama_generate_chat(context, sys_prompt, stream=stream)['message']['content']
 
-            return result
+            return gen_text
 

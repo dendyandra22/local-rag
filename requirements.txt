@@ -2,6 +2,8 @@ ollama
 faiss-cpu
 numpy<2
 pandas
+openpyxl
+xlrd
 scikit-learn
 sklearn-crfsuite
 fastapi[standard]

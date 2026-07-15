@@ -6,8 +6,14 @@ const newChatButton = document.querySelector("#newChatButton");
 const statusDot = document.querySelector("#statusDot");
 const statusText = document.querySelector("#statusText");
 const promptChips = document.querySelectorAll(".prompt-chip");
+const datasetInput = document.querySelector("#datasetInput");
+const datasetPathInput = document.querySelector("#datasetPathInput");
+const datasetFileName = document.querySelector("#datasetFileName");
+const datasetUploadButton = document.querySelector("#datasetUploadButton");
+const datasetStatus = document.querySelector("#datasetStatus");
 
 let isSending = false;
+let isUploadingDataset = false;
 let sessionId = localStorage.getItem("ragChatSessionId") || createSessionId();
 
 localStorage.setItem("ragChatSessionId", sessionId);
@@ -63,6 +69,23 @@ function setSending(nextValue) {
   input.disabled = nextValue;
 }
 
+function setDatasetUploading(nextValue) {
+  isUploadingDataset = nextValue;
+  datasetInput.disabled = nextValue;
+  datasetPathInput.disabled = nextValue;
+  datasetUploadButton.disabled = nextValue;
+  datasetUploadButton.textContent = nextValue ? "Sending..." : "Send path";
+}
+
+function setDatasetStatus(message, state = "") {
+  datasetStatus.textContent = message;
+  datasetStatus.dataset.state = state;
+}
+
+function getSelectedDatasetPath() {
+  return datasetPathInput.value.trim();
+}
+
 function renderEmptyState() {
   messagesEl.innerHTML = `
     <div class="empty-state">
@@ -84,6 +107,23 @@ async function checkHealth() {
   } catch (error) {
     statusDot.className = "status-dot offline";
     statusText.textContent = "API offline";
+  }
+}
+
+async function loadDatasetStatus() {
+  try {
+    const response = await fetch("/dataset");
+    if (!response.ok) {
+      throw new Error("Could not load dataset status");
+    }
+
+    const data = await response.json();
+    setDatasetStatus(
+      data.filename ? `Using ${data.filename}` : "Using startup dataset",
+      data.filename ? "ready" : ""
+    );
+  } catch (error) {
+    setDatasetStatus("Dataset status unavailable", "error");
   }
 }
 
@@ -169,6 +209,50 @@ async function sendMessage(message) {
   }
 }
 
+async function sendSelectedDatasetPath() {
+  const file = datasetInput.files?.[0];
+  const datasetPath = getSelectedDatasetPath();
+
+  if (isUploadingDataset) {
+    return;
+  }
+
+  if (!datasetPath) {
+    setDatasetStatus("Choose a file or enter a dataset path first", "error");
+    datasetPathInput.focus();
+    return;
+  }
+
+  setDatasetUploading(true);
+  setDatasetStatus("Sending dataset path...", "busy");
+
+  try {
+    const response = await fetch("/dataset", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        file_path: datasetPath,
+      }),
+    });
+    const data = await response.json();
+
+    if (!response.ok) {
+      throw new Error(data.detail || "Dataset upload failed");
+    }
+
+    const activeDataset = data.file_path || data.filename || datasetPath;
+    setDatasetStatus(`Sent ${activeDataset}`, "ready");
+    addMessage("assistant", `Dataset path sent to the API: ${activeDataset}`);
+  } catch (error) {
+    setDatasetStatus(error.message, "error");
+  } finally {
+    setDatasetUploading(false);
+    checkHealth();
+  }
+}
+
 form.addEventListener("submit", (event) => {
   event.preventDefault();
   const message = input.value;
@@ -203,6 +287,24 @@ promptChips.forEach((chip) => {
   });
 });
 
+datasetInput?.addEventListener("change", () => {
+  const file = datasetInput.files?.[0];
+  datasetFileName.textContent = file ? file.name : "Choose CSV or Excel file";
+  datasetPathInput.value = file ? (file.webkitRelativePath || file.name) : "";
+  if (file) {
+    setDatasetStatus("Ready to send selected dataset path");
+  }
+});
+
+datasetPathInput?.addEventListener("input", () => {
+  if (getSelectedDatasetPath()) {
+    setDatasetStatus("Ready to send dataset path");
+  }
+});
+
+datasetUploadButton?.addEventListener("click", sendSelectedDatasetPath);
+
 resizeInput();
 checkHealth();
+loadDatasetStatus();
 loadHistory();

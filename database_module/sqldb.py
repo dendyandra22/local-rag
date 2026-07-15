@@ -1,0 +1,98 @@
+import sqlite3
+from pathlib import Path
+import pandas as pd
+# from datetime import datetime
+
+from util.logger import print_log
+from database_module.rag_db import RAGDatabase
+
+BASE_DIR = Path(__file__).resolve().parent.parent
+DATABASE_PATH = BASE_DIR / "data"
+
+class SQLDB(RAGDatabase):
+    def __init__(self, db_name):
+        super().__init__(db_name)
+
+    def connect_db(self):
+        self.db_path = DATABASE_PATH / f"{self.db_name}.db"
+        if self._check_db_exist():
+            # self.conn = sqlite3.connect(self.db_path)
+            print_log(f"{self.db_name}.db connection is available.")
+
+        else:
+            self.db_path = None
+            print_log(f"{self.db_name}.db does not exist.")
+            raise FileNotFoundError(f"{self.db_name}.db does not exist.")
+
+    def create_db(self, df: pd.DataFrame):
+        if self._check_db_exist():
+            print_log(f"rebuilding SQL DB {self.db_name}.db")
+        else:
+            print_log(f"creating SQL DB {self.db_name}.db")
+            self.db_path = DATABASE_PATH / f"{self.db_name}.db"
+
+        print('total rows SQLDB:', df.shape[0])
+        Path("data").mkdir(exist_ok=True)
+        conn = sqlite3.connect(self.db_path)
+        df.to_sql(self.db_name, conn, if_exists="replace", index=False)
+
+        # creating full text search (FTS) SQL DB
+        cursor = conn.cursor()
+        cursor.execute(f"DROP TABLE IF EXISTS {self.db_name}_fts;")
+
+        # create a virtual FTS5 table
+        cursor.execute(f"CREATE VIRTUAL TABLE IF NOT EXISTS {self.db_name}_fts USING fts5(\
+                       mal_id UNINDEXED, title, title_english, type, chapters UNINDEXED, \
+                       volumes UNINDEXED, status, published_from, published_to, score UNINDEXED, \
+                       authors, genres, themes, synopsis\
+                       );")
+
+        # copy existing data into the new FTS table
+        cursor.execute(f"INSERT INTO {self.db_name}_fts(mal_id, title, title_english, type, chapters, volumes, status,\
+         published_from, published_to, score, authors, genres, themes, synopsis) SELECT mal_id, title, \
+         title_english, type, chapters, volumes, status, published_from, published_to, score, authors, \
+         genres, themes, synopsis \
+         FROM {self.db_name};")
+        conn.commit()
+
+        # self.conn = conn
+        # self.created_at = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        print_log(f"{self.db_name}.db created successfully.")
+
+
+    def search_sql(self, query_filter: str, use_fts: bool, return_context: bool, limit: int = 5):
+
+        # if not self._check_conn():
+        #     raise AttributeError(f'{self.db_name} database connection not initiated.')
+
+        if use_fts:
+            query = f'''
+            SELECT * FROM {self.db_name}_fts
+            WHERE {self.db_name}_fts MATCH ''' + query_filter
+            # context = ''
+
+
+        else:
+            query = f'''SELECT * FROM {self.db_name} ''' + query_filter
+            # context = ''
+
+        print('XXX SQL QUERY', query)
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            try:
+                cursor.execute(query)
+                all_rows = cursor.fetchmany(limit)
+
+                col_list = [desc[0] for desc in cursor.description]
+            finally:
+                cursor.close()
+
+        if return_context:
+            context = ''
+            for row in all_rows:
+                context = context + ' '.join(f'{col}: {val}\n' for col, val in zip(col_list, row))
+
+            return context
+
+        data = [{k: v for k, v in zip(col_list, row)} for row in all_rows]
+        return data
