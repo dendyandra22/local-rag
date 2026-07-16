@@ -8,6 +8,7 @@ from nlu_module.nlu_component import NLUComponent
 from util.logger import print_log
 from database_module.vectordb import VectorDB
 from database_module.sqldb import SQLDB
+from rag_module.manga_tool import *
 
 SUPPORTED_INFERENCE = ["ollama", 'huggingface']
 SUPPORTED_DATASET_EXTENSIONS = {".csv", ".xls", ".xlsx"}
@@ -457,3 +458,97 @@ class RAGAction(RAGModel):
 
             return gen_text
 
+    def response_handler_with_tool(self, messages: str, stream: bool=False, verbose: bool=False, chat_history: list[dict]|None=None):
+        self._verify_rag_available()
+        context = ''
+        sys_prompt = """
+        You are MangaBot, a friendly and knowledgeable manga assistant.
+
+        You have access to these tools:
+        
+        1. search_metadata(title, genres, authors, themes)
+        - Search a manga metadata by title, genres, authors, or themes. Use if you found manga metadata in user message.
+        
+        2. search_by_genres(genres)
+        - Search manga recommendation by genres. Use this if user want to find manga contain certain genres.
+        
+        """
+        template_messages = [
+            {
+                'role': 'system',
+                'content': sys_prompt,
+            },
+            {
+                'role': 'user',
+                'content': messages,
+            },
+        ]
+        response = chat(
+            model="lukaspetrik/gemma3-tools:4b",
+            messages=template_messages,
+            tools=[search_metadata, search_by_genres],
+        )
+        template_messages.append(response.message)
+        # print(template_messages)
+        # raise ValueError
+
+        # Check if the model decided to call our tool
+        if response.message.tool_calls:
+            for tool in response.message.tool_calls:
+                if tool.function.name == "search_metadata":
+                    # Change 'tools' to 'tool' here
+                    args = tool.function.arguments
+                    print(f"-> Gemma 3 triggered {tool.function.name} call with arguments: {args}")
+
+                    # Execute the local function
+                    tool_output = search_metadata(self.sql_db,
+                                                  title=args.get("title"),
+                                                  genres=args.get("genres"),
+                                                  authors=args.get("authors"),
+                                                  themes=args.get("themes"),
+                                                  return_context=True
+                                                  )
+
+                    # Feed the function's result back into the chat history
+                    template_messages.append({
+                        "role": "tool",
+                        "tool_name": tool.function.name,
+                        "content": tool_output
+                    })
+
+                elif tool.function.name == "search_by_genres":
+                    # Change 'tools' to 'tool' here
+                    args = tool.function.arguments
+                    print(f"-> Gemma 3 triggered tool {tool.function.name} with arguments: {args}")
+
+                    # Execute the local function
+                    tool_output = search_by_genres(self.sql_db, genres=args.get("genres"), return_context=True)
+
+                    # Feed the function's result back into the chat history
+                    template_messages.append({
+                        "role": "tool",
+                        "tool_name": tool.function.name,
+                        "content": tool_output
+                    })
+
+        if stream:
+            if verbose: print('RH-STREAM')
+            def _response_generator():
+                result = chat(
+                    model="lukaspetrik/gemma3-tools:4b",
+                    messages=template_messages,
+                    stream=stream,
+                )
+                for chunk in result:
+                    yield chunk['message']['content']
+
+            return _response_generator()
+        else:
+            if verbose: print('RH-FULLTEXT')
+            gen_text = chat(
+                model="lukaspetrik/gemma3-tools:4b",
+                messages=template_messages,
+                stream=stream,
+            )['message']['content']
+
+            return gen_text

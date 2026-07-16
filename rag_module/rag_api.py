@@ -219,9 +219,13 @@ async def chat_api(request: ChatRequest):
         with rag_lock:
             active_ragc = ragc
 
-        for chunk in active_ragc.response_handler(request.message, verbose=True, stream=True, chat_history=None):
+        # for chunk in active_ragc.response_handler(request.message, verbose=True, stream=True, chat_history=None):
+        #     chunks.append(chunk)
+        #     yield chunk
+        for chunk in active_ragc.response_handler_with_tool(request.message, verbose=True, stream=True, chat_history=None):
             chunks.append(chunk)
             yield chunk
+
 
         assistant_message = ''.join(chunks)
         updated_history = history + [
