@@ -91,6 +91,7 @@ class SQLDB(RAGDatabase):
             context = ''
             for row in all_rows:
                 context = context + ' '.join(f'{col}: {val}\n' for col, val in zip(col_list, row))
+                context += "\n\n"
 
             return context
 
