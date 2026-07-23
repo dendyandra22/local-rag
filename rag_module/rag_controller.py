@@ -2,6 +2,7 @@ import re
 from pathlib import Path
 import pandas as pd
 from ollama import chat
+import time
 
 from nlu_module.nlu_component import NLUComponent
 # from rag_module.response import Response
@@ -151,7 +152,7 @@ class RAGAction(RAGModel):
         max_rows = max_rows if isinstance(max_rows, int) else df.shape[0]
         print_log(f"{max_rows} rows data selected")
         
-        if isinstance(drop_cols, list):
+        if isinstance(drop_cols, list) and len(drop_cols) > 0:
             df.dropna(subset=drop_cols, inplace=True)
             print_log("dropping unused columns")
             # df.dropna(subset=['title', 'score', 'authors', 'genres', 'themes', 'synopsis'], inplace=True)
@@ -164,8 +165,10 @@ class RAGAction(RAGModel):
         df['authors'] = df['authors'].apply(lambda x: x.replace('|', '\n'))
         df['genres'] = df['genres'].apply(lambda x: x.replace('|', '\n'))
         df['themes'] = df['themes'].apply(lambda x: x.replace('|', '\n'))
+
+        df_vec = df[["mal_id","title","title_english","synopsis"]]
         
-        self.vec_db = VectorDB(self.rag_name).create_db(df)
+        self.vec_db = VectorDB(self.rag_name).create_db(df_vec)
         
         if retrain_nlu:
             self.nlu = NLUComponent(self.nlu_name, retrain_model=retrain_nlu)
@@ -463,19 +466,57 @@ class RAGAction(RAGModel):
         context = ''
         sys_prompt = """
         You are MangaBot, a friendly and knowledgeable manga assistant.
-
-        You have access to these tools:
         
-        1. search_metadata(title, genres, authors, themes)
-        - Search a manga metadata by title, genres, authors, or themes. Use if you found manga metadata in user message.
+        You can have normal conversations with the user without using any tools.
         
-        2. search_by_genres(genres)
-        Search manga recommendation by genres. Use this tool whenever the user asks about:
-        - Recommend/suggest manga based on genres that user given.
+        Examples of messages that should NOT use any tool:
+        - Hi
+        - Hello
+        - Who are you?
+        - How are you?
+        - Thank you
+        - What can you do?
+        - Tell me a joke
         
-        CRITICAL: Only provide arguments that the user EXPLICITLY mentioned in their prompt. DO NOT guess, hallucinate, or assume these values if they aren't provided by the user.
-
+        For these messages, reply naturally as a friendly chatbot.
         
+        --------------------------------------------------
+        
+        Use tools ONLY when the user is requesting manga information that requires searching the local database.
+        
+        Examples:
+        - Find comedy manga.
+        - Recommend manga similar to Berserk.
+        - Show manga by Naoki Urasawa.
+        - What genres does Monster have?
+        - Find manga released in 2025.
+        - Find a manga about an unemployed man who gets another chance at life.
+        - Find a manga like Yuru Yuri.
+        
+        Choose the correct tool:
+        
+        • search_by_filters
+        Use when the user specifies structured information such as:
+        - title
+        - author
+        - genre
+        - theme
+        - publication year
+        
+        • search_by_synopsis
+        Use when the user describes a story, characters, events, or plot instead of structured metadata.
+        
+        • recommend_by_title
+        Use this tool when the user asks for manga recommendations similar to a specific manga.
+        
+        Tool-calling rules:
+        - Only use tools when the user's request requires searching the manga database.
+        - It is completely acceptable to answer without calling any tool.
+        - Never guess missing tool arguments.
+        - Only pass information explicitly provided by the user.
+        - Leave unspecified optional arguments null.
+        - After receiving tool results, answer only using the returned data.
+        - If the tool returns no results, politely inform the user that no matching manga were found.
         """
         template_messages = [
             {
@@ -492,73 +533,89 @@ class RAGAction(RAGModel):
             }
         )
         print_log("Processing user message")
-        print(template_messages)
+        # print(template_messages)
         # raise ValueError
         response = chat(
             model="lukaspetrik/gemma3-tools:4b",
             messages=template_messages,
-            tools=[search_metadata, search_by_genres],
+            tools=[search_by_filters,
+                   search_by_synopsis,
+                   recommend_by_title
+                   ],
         )
         print_log("First LLM stage")
         # print(response.message)
-        # print("="*40)
-        # template_messages.append({"role":response.message.role,
-        #                           "content":response.message.content})
-        print(template_messages)
-        # raise ValueError
 
-        # Check if the model decided to call our tool
-        if response.message.tool_calls:
+        if response.message.tool_calls is None:
+            if verbose: print('RH-STREAM NON TOOLS')
+            def _response_generator():
+                for i in range(0, len(response.message.content), 20):
+                    yield response.message.content[i:i + 20]
+                    # time.sleep(0.2)
+            # def _response_generator():
+            #     content = response.message.content.split()
+            #     for chunk in content:
+            #         yield chunk + " "
+
+            return _response_generator()
+
+        else:
+            template_messages.append(response.message)
             for tool in response.message.tool_calls:
                 tool_name = tool.function.name
+                tool_output = None
                 args = tool.function.arguments
                 print(f"-> Gemma 3 triggered {tool_name} call with arguments: {args}")
-                if tool_name == "search_metadata":
+
+                if tool_name == "search_by_filters":
                     # Execute the local function
-                    tool_output = search_metadata(self.sql_db,
-                                                  title=args.get("title"),
-                                                  genres=args.get("genres"),
-                                                  authors=args.get("authors"),
-                                                  themes=args.get("themes"),
-                                                  return_context=True
+                    tool_output = search_by_filters(self.sql_db,
+                                                      title=args.get("title"),
+                                                      genres=args.get("genres"),
+                                                      authors=args.get("authors"),
+                                                      themes=args.get("themes"),
+                                                      released_year=args.get("released_year"),
                                                   )
 
+                elif tool_name == "search_by_synopsis":
+                    # Execute the local function
+                    tool_output = search_by_synopsis(self.vec_db, query=args.get("query"))
+
+
+                elif tool_name == "recommend_by_title":
+                    # Execute the local function
+                    tool_output = recommend_by_title(self.sql_db, title=args.get("title"))
+
+                if tool_output is not None:
                     # Feed the function's result back into the chat history
+                    print("TOOL OUTPUT", tool_output)
                     template_messages.append({
                         "role": "tool",
                         "tool_name": tool_name,
                         "content": tool_output
                     })
 
-                elif tool_name == "search_by_genres":
-                    # Execute the local function
-                    tool_output = search_by_genres(self.sql_db, genres=args.get("genres"), return_context=True)
-
-                    # Feed the function's result back into the chat history
-                    template_messages.append({
-                        "role": "tool",
-                        "tool_name": tool.function.name,
-                        "content": tool_output
-                    })
+            print()
+            print("RH-AFTER TOOL CALLS")
             print(template_messages)
-        if stream:
-            if verbose: print('RH-STREAM')
-            def _response_generator():
-                result = chat(
-                    model="lukaspetrik/gemma3-tools:4b",
+            if stream:
+                if verbose: print('RH-STREAM_TOOL')
+                def _response_generator():
+                    result = chat(
+                        model="lukaspetrik/gemma3-tools:4b",
+                        messages=template_messages,
+                        stream=stream,
+                    )
+                    for chunk in result:
+                        yield chunk['message']['content']
+
+                return _response_generator()
+            else:
+                if verbose: print('RH-FULLTEXT_TOOL')
+                gen_text = chat(
+                    model="lukaspetrik/gemma3-tools:4b", # "lukaspetrik/gemma3-tools:4b" "gemma3:4b"
                     messages=template_messages,
                     stream=stream,
-                )
-                for chunk in result:
-                    yield chunk['message']['content']
+                )['message']['content']
 
-            return _response_generator()
-        else:
-            if verbose: print('RH-FULLTEXT')
-            gen_text = chat(
-                model="lukaspetrik/gemma3-tools:4b", # "lukaspetrik/gemma3-tools:4b" "gemma3:4b"
-                messages=template_messages,
-                stream=stream,
-            )['message']['content']
-
-            return gen_text
+                return gen_text
