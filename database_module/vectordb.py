@@ -39,7 +39,8 @@ class VectorDB(RAGDatabase):
     def _make_document(dataframe):
         pattern = r'\s+'
         columns = list(dataframe.columns)
-        columns.remove('mal_id')
+        if "mal_id" in columns:
+            columns.remove('mal_id')
         for data in dataframe.itertuples():
             yield '\n\n'.join([f"{col}:\n{getattr(data, col)}" for col in columns])
 
@@ -103,6 +104,7 @@ class VectorDB(RAGDatabase):
     def _clean_text(text):
         text = text.replace('|', ', ')
         text = re.sub(r"\(Source:.*?\)", " ", text)
+        text = text.lower()
         text = re.sub(r"\s+", " ", text).strip()
 
         return text
@@ -137,8 +139,8 @@ class VectorDB(RAGDatabase):
             distances = distances[0]
 
             mal_ids = [str(ids) for ids in mal_ids[:k]]
-            # print('response mal_id', mal_ids)
-            # print('distances mal_id', distances)
+            print('response mal_id', mal_ids)
+            print('distances mal_id', distances)
 
             # make conn to sql db
             sql_db = SQLDB(self.db_name)
@@ -150,3 +152,5 @@ class VectorDB(RAGDatabase):
                 context = sql_db.search_sql(query_filter, use_fts=False, limit=k, return_context=return_context)
 
             return context
+
+        return ""
