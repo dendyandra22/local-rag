@@ -28,12 +28,13 @@ class VectorDB(RAGDatabase):
             with open(f"data/{self.db_name}_mapping.pkl", "rb") as f:
                 vdb_idx = pickle.load(f)
 
-            print_log(f'successfully load {self.db_name} vector database')
+            print_log(f"{self.db_name}.faiss connection is available.")
             self.conn = vdb
             self.conn_index = vdb_idx
         else:
             self.db_path = None
-            raise AttributeError(f'{self.db_name} vector database not found')
+            # print_log(f"{self.db_name}.faiss does not exist.")
+            raise FileNotFoundError(f"{self.db_name}.faiss does not exist.")
 
     @staticmethod
     def _make_document(dataframe):
@@ -66,7 +67,7 @@ class VectorDB(RAGDatabase):
 
         return vectors
 
-    def create_db(self, df: pd.DataFrame):
+    def create_db(self, df: pd.DataFrame, index_col:str):
         if self._check_db_exist():
             print_log(f"rebuilding Vector DB {self.db_name}.faiss")
 
@@ -92,7 +93,7 @@ class VectorDB(RAGDatabase):
             f"data/{self.db_name}.faiss"
         )
         print_log(f'save embedding index data as data/{self.db_name}_mapping.pkl')
-        id_mapping = df["mal_id"].tolist()
+        id_mapping = df[index_col].tolist()
         with open(f"data/{self.db_name}_mapping.pkl", "wb") as f:
             pickle.dump(id_mapping, f)
 

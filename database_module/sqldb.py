@@ -21,7 +21,7 @@ class SQLDB(RAGDatabase):
 
         else:
             self.db_path = None
-            print_log(f"{self.db_name}.db does not exist.")
+            # print_log(f"{self.db_name}.db does not exist.")
             raise FileNotFoundError(f"{self.db_name}.db does not exist.")
 
     def create_db(self, df: pd.DataFrame):
@@ -41,18 +41,32 @@ class SQLDB(RAGDatabase):
         cursor.execute(f"DROP TABLE IF EXISTS {self.db_name}_fts;")
 
         # create a virtual FTS5 table
-        cursor.execute(f"CREATE VIRTUAL TABLE IF NOT EXISTS {self.db_name}_fts USING fts5(\
-                       mal_id UNINDEXED, title, title_english, type, chapters UNINDEXED, \
-                       volumes UNINDEXED, status, published_from, published_to, score UNINDEXED, \
-                       authors, genres, themes, synopsis\
-                       );")
+        column_query = ''
+        unindexed_columns = df.select_dtypes(include=['int', 'float']).columns.tolist()
+        for col in df.columns:
+            if col in unindexed_columns:
+                column_query += f'{col} UNINDEXED, '
+            else:
+                column_query += f'{col}, '
+        column_query = column_query.strip()
+        if column_query[-1] == ',':
+            column_query = column_query[:-1]
+        cursor.execute(f"CREATE VIRTUAL TABLE IF NOT EXISTS {self.db_name}_fts USING fts5({column_query});")
+
+        # cursor.execute(f"CREATE VIRTUAL TABLE IF NOT EXISTS {self.db_name}_fts USING fts5(\
+        #                mal_id UNINDEXED, title, title_english, type, chapters UNINDEXED, \
+        #                volumes UNINDEXED, status, published_from, published_to, score UNINDEXED, \
+        #                authors, genres, themes, synopsis\
+        #                );")
 
         # copy existing data into the new FTS table
-        cursor.execute(f"INSERT INTO {self.db_name}_fts(mal_id, title, title_english, type, chapters, volumes, status,\
-         published_from, published_to, score, authors, genres, themes, synopsis) SELECT mal_id, title, \
-         title_english, type, chapters, volumes, status, published_from, published_to, score, authors, \
-         genres, themes, synopsis \
-         FROM {self.db_name};")
+        column_query = ', '.join(df.columns.tolist())
+        cursor.execute(f"INSERT INTO {self.db_name}_fts({column_query}) SELECT {column_query} FROM {self.db_name};")
+        # cursor.execute(f"INSERT INTO {self.db_name}_fts(mal_id, title, title_english, type, chapters, volumes, status,\
+        #  published_from, published_to, score, authors, genres, themes, synopsis) SELECT mal_id, title, \
+        #  title_english, type, chapters, volumes, status, published_from, published_to, score, authors, \
+        #  genres, themes, synopsis \
+        #  FROM {self.db_name};")
         conn.commit()
 
         # self.conn = conn
