@@ -14,7 +14,7 @@ from util.logger import print_log
 from database_module.vectordb import VectorDB
 from database_module.sqldb import SQLDB
 # from rag_module.manga_tool import *
-from rag_module.general_tool import *
+from rag_module.general_tool import sql_get_by_columns, sql_get_by_filter
 from rag_module.rag_staging import *
 
 SUPPORTED_INFERENCE = ["llama"]
@@ -195,6 +195,21 @@ class RAGAction(RAGModel):
                                         )
         return tool_output
 
+    def search_by_filter(self, filters: list[dict], searchable_columns: list[str], limit: int = 10):
+        """
+        Filters the dataset based on conditions (like greater than, less than, or equals) and returns a specific number of rows.
+        """
+        print("def searchable col:", searchable_columns)
+        print("filters\n", filters)
+        print("limit\n", limit)
+
+        tool_output = sql_get_by_filter(self.sql_db, filter_list=filters, limit=limit, searchable_columns=searchable_columns)
+        print("search_by_filter output\n", tool_output)
+
+
+        return None
+
+
 
     def response_handler_with_tool(self, messages: str, stream: bool=False, verbose: bool=False, chat_history: list[dict]|None=None, chat_history_limit: int = 5):
         self._verify_rag_available()
@@ -226,7 +241,7 @@ class RAGAction(RAGModel):
                 "type": "string",
                 "description": f"The exact value for {col} mentioned by the user. Leave null if not mentioned."
             }
-        tools = tools = [
+        tools = [
             {
                 "type": "function",
                 "function": {
@@ -236,6 +251,48 @@ class RAGAction(RAGModel):
                         "type": "object",
                         "properties": properties,
                         "required": []
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "search_by_filter",
+                    "description": "Filters the dataset based on conditions (like greater than, less than, or equals) and returns a specific number of rows.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "filters": {
+                                "type": "array",
+                                "description": "A list of conditions to apply to the data.",
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                        "column": {
+                                            "type": "string",
+                                            "description": "The database column to filter.",
+                                            "enum": searchable_columns  # Force the LLM to pick a valid column
+                                        },
+                                        "operator": {
+                                            "type": "string",
+                                            "description": "The comparison operator.",
+                                            "enum": ["=", ">", "<", ">=", "<="]  # Force valid SQL operators
+                                        },
+                                        "value": {
+                                            "type": "string",
+                                            "description": "The value to compare against. (e.g., 'games', '7.5')"
+                                        }
+                                    },
+                                    "required": ["column", "operator", "value"]
+                                }
+                            },
+                            "limit": {
+                                "type": "integer",
+                                "description": "The maximum number of rows to return. Default to 10 if the user doesn't specify.",
+                                "default": 10
+                            }
+                        },
+                        "required": ["filters"]
                     }
                 }
             }
@@ -264,10 +321,17 @@ class RAGAction(RAGModel):
         # catch tool calls if its written on content
         elif choices.get("content") and "<tool_call>" in choices["content"]:
             # extract the JSON block between the tags using regex
+            print_log("Extracting tool call from content")
             match = re.search(r"<tool_call>\s*({.*?})\s*</tool_call>", choices["content"], re.DOTALL)
             if match:
                 raw_json_str = match.group(1)
-                tool_data = json.loads(raw_json_str)
+                # print("raw_json_str\n",raw_json_str)
+                try:
+                    tool_data = json.loads(raw_json_str)
+                except json.decoder.JSONDecodeError:
+                    print_log("JSONDecodeError raised! fixing raw json string")
+                    raw_json_str += "}"
+                    tool_data = json.loads(raw_json_str)
                 tool_name = tool_data["name"]
                 tool_args = tool_data["arguments"]
                 if "args" in tool_args:
@@ -280,6 +344,14 @@ class RAGAction(RAGModel):
             if tool_name == "search_by_columns":
                 tool_output = self.search_by_columns(tool_args, searchable_columns=searchable_columns)
 
+            elif tool_name == "search_by_filter":
+                filters = tool_args.get("filters", [])
+                limit = tool_args.get("limit", 10)
+                tool_output = self.search_by_filter(filters=filters,
+                                                         limit=limit,
+                                                         searchable_columns=searchable_columns
+                                                         )
+
             # Append the tool result back to the message history
             if tool_output is not None:
                 template_messages.append({
@@ -288,7 +360,7 @@ class RAGAction(RAGModel):
                     "tool_name": tool_name,
                     "content": tool_output
                 })
-
+            raise ValueError("END TEST")
             print_log("Second LLM stage")
             print(template_messages)
 
