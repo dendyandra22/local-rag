@@ -74,23 +74,27 @@ class SQLDB(RAGDatabase):
         print_log(f"{self.db_name}.db created successfully.")
 
 
-    def search_sql(self, query_filter: str, use_fts: bool, return_context: bool, limit: int = 5):
+    def search_sql(self, query_filter: str, use_fts: bool, return_context: bool, column_selection: str = None, limit: int = 5):
 
         # if not self._check_conn():
         #     raise AttributeError(f'{self.db_name} database connection not initiated.')
 
+        column_selection = column_selection if column_selection else "*"
+
         if use_fts:
+            if query_filter == '':
+                raise ValueError("query_filter cannot be empty if use_fts is True!")
             query = f'''
-            SELECT * FROM {self.db_name}_fts
+            SELECT {column_selection} FROM {self.db_name}_fts
             WHERE {self.db_name}_fts MATCH ''' + query_filter
             # context = ''
 
 
         else:
-            query = f'''SELECT * FROM {self.db_name} ''' + query_filter
+            query = f'''SELECT {column_selection} FROM {self.db_name} ''' + query_filter
             # context = ''
 
-        print('XXX SQL QUERY', query)
+        print('XXX SQL QUERY\n', query)
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
             try:
