@@ -47,7 +47,7 @@ class RAGModel:
             model_path="model/Qwen2.5-3B-Instruct-Q4_K_M.gguf",
             # n_gpu_layers=-1, # Uncomment to use GPU acceleration
             seed=42,  # Uncomment to set a specific seed
-            n_ctx=2048, # Uncomment to increase the context window
+            n_ctx=3072, # Uncomment to increase the context window
             verbose=False
         )
 
@@ -199,15 +199,15 @@ class RAGAction(RAGModel):
         """
         Filters the dataset based on conditions (like greater than, less than, or equals) and returns a specific number of rows.
         """
-        print("def searchable col:", searchable_columns)
-        print("filters\n", filters)
-        print("limit\n", limit)
+        # print("def searchable col:", searchable_columns)
+        # print("filters\n", filters)
+        # print("limit\n", limit)
 
         tool_output = sql_get_by_filter(self.sql_db, filter_list=filters, limit=limit, searchable_columns=searchable_columns)
-        print("search_by_filter output\n", tool_output)
 
 
-        return None
+        return tool_output
+
 
 
 
@@ -235,72 +235,11 @@ class RAGAction(RAGModel):
         print(template_messages)
         # Structure the tool definitions using OpenAI format
         searchable_columns = self._config_sep2list(self._config["DATASET"].get("drop_na_fields"))
-        properties = {}
-        for col in searchable_columns:
-            properties[col] = {
-                "type": "string",
-                "description": f"The exact value for {col} mentioned by the user. Leave null if not mentioned."
-            }
-        tools = [
-            {
-                "type": "function",
-                "function": {
-                    "name": "search_by_columns",
-                    "description": "Finds data matching specific columns. ONLY provide arguments explicitly mentioned by the user.",
-                    "parameters": {
-                        "type": "object",
-                        "properties": properties,
-                        "required": []
-                    }
-                }
-            },
-            {
-                "type": "function",
-                "function": {
-                    "name": "search_by_filter",
-                    "description": "Filters the dataset based on conditions (like greater than, less than, or equals) and returns a specific number of rows.",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "filters": {
-                                "type": "array",
-                                "description": "A list of conditions to apply to the data.",
-                                "items": {
-                                    "type": "object",
-                                    "properties": {
-                                        "column": {
-                                            "type": "string",
-                                            "description": "The database column to filter.",
-                                            "enum": searchable_columns  # Force the LLM to pick a valid column
-                                        },
-                                        "operator": {
-                                            "type": "string",
-                                            "description": "The comparison operator.",
-                                            "enum": ["=", ">", "<", ">=", "<="]  # Force valid SQL operators
-                                        },
-                                        "value": {
-                                            "type": "string",
-                                            "description": "The value to compare against. (e.g., 'games', '7.5')"
-                                        }
-                                    },
-                                    "required": ["column", "operator", "value"]
-                                }
-                            },
-                            "limit": {
-                                "type": "integer",
-                                "description": "The maximum number of rows to return. Default to 10 if the user doesn't specify.",
-                                "default": 10
-                            }
-                        },
-                        "required": ["filters"]
-                    }
-                }
-            }
-        ]
+        tool_schema = generate_toolcall_schema(searchable_columns)
 
         first_stage_output = hf_first_stage(self.llm,
                                             template_messages=template_messages,
-                                            tools=tools,
+                                            tools=tool_schema,
                                             tool_choice="auto"
                                             )
         print_log("First LLM stage")
@@ -352,6 +291,16 @@ class RAGAction(RAGModel):
                                                          searchable_columns=searchable_columns
                                                          )
 
+            elif tool_name == "basic_aggregation":
+                aggregation_list = tool_args.get("aggregation_list", [])
+                filters = tool_args.get("filters", [])
+                limit = tool_args.get("limit", 10)
+                tool_output = sql_get_basic_aggregation(self.sql_db, aggregation_list=aggregation_list,
+                                                        filter_list=filters,
+                                                        limit=limit,
+                                                        searchable_columns=searchable_columns
+                                                        )
+
             # Append the tool result back to the message history
             if tool_output is not None:
                 template_messages.append({
@@ -360,13 +309,13 @@ class RAGAction(RAGModel):
                     "tool_name": tool_name,
                     "content": tool_output
                 })
-            raise ValueError("END TEST")
+            # raise ValueError("END TEST")
             print_log("Second LLM stage")
             print(template_messages)
 
             # stream final response
             def _response_generator():
-                result = hf_second_stage(self.llm, template_messages=template_messages, tools=tools)
+                result = hf_second_stage(self.llm, template_messages=template_messages, tools=tool_schema)
                 for chunk in result:
                     delta = chunk["choices"][0]["delta"]
                     if "content" in delta:
