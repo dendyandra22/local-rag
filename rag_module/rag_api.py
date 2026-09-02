@@ -12,7 +12,8 @@ from fastapi.responses import FileResponse
 from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
-from rag_module.rag_controller import RAGAction
+# from rag_module.rag_controller import RAGAction
+from rag_module.rag_controller_llama import RAGAction
 from database_module.tabular_data import SUPPORTED_DATASET_EXTENSIONS
 
 app = FastAPI()
@@ -22,15 +23,17 @@ WEB_UI_DIR = BASE_DIR / "web_ui"
 CHAT_HISTORY_DIR = BASE_DIR / "chat_history"
 DATA_DIR = BASE_DIR / "data"
 MAX_HISTORY_MESSAGES = 40
-RAG_NAME = "manga"
+
+# RAG source setting below:
+RAG_NAME = "apple" # manga apple
 RAG_TIMESTAMP = "2026-06-24"
 RAG_INFERENCE_TYPE = None
 RAG_REBUILD = False
 
 ragc = RAGAction(
     rag_name=RAG_NAME,
-    nlu_model_name=RAG_TIMESTAMP,
-    inference_type=RAG_INFERENCE_TYPE,
+    # nlu_model_name=RAG_TIMESTAMP,
+    # inference_type=RAG_INFERENCE_TYPE,
 )
 rag_lock = threading.Lock()
 active_dataset = {
@@ -222,7 +225,7 @@ async def chat_api(request: ChatRequest):
         # for chunk in active_ragc.response_handler(request.message, verbose=True, stream=True, chat_history=None):
         #     chunks.append(chunk)
         #     yield chunk
-        for chunk in active_ragc.response_handler_with_tool(request.message, verbose=True, stream=True, chat_history=history):
+        for chunk in active_ragc.response_handler_with_tool(request.message, verbose=True, stream=True, chat_history=history, chat_history_limit=4):
             chunks.append(chunk)
             yield chunk
 
