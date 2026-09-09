@@ -9,11 +9,10 @@ import json
 import ast
 
 from nlu_module.nlu_component import NLUComponent
-# from rag_module.response import Response
+
 from util.logger import print_log
 from database_module.vectordb import VectorDB
 from database_module.sqldb import SQLDB
-# from rag_module.manga_tool import *
 from rag_module.general_tool import sql_get_by_columns, sql_get_by_filter
 from rag_module.rag_staging import *
 
@@ -47,7 +46,7 @@ class RAGModel:
             model_path="model/Qwen2.5-3B-Instruct-Q4_K_M.gguf",
             # n_gpu_layers=-1, # Uncomment to use GPU acceleration
             seed=42,  # Uncomment to set a specific seed
-            n_ctx=3072, # Uncomment to increase the context window
+            n_ctx=8096, # Uncomment to increase the context window
             verbose=False
         )
 
@@ -294,11 +293,14 @@ class RAGAction(RAGModel):
             elif tool_name == "basic_aggregation":
                 aggregation_list = tool_args.get("aggregation_list", [])
                 filters = tool_args.get("filters", [])
-                limit = tool_args.get("limit", 10)
+                group_by = tool_args.get("group_by", [])
+                having = tool_args.get("having", {})
+                # limit = tool_args.get("limit", 10)
                 tool_output = sql_get_basic_aggregation(self.sql_db, aggregation_list=aggregation_list,
                                                         filter_list=filters,
-                                                        limit=limit,
-                                                        searchable_columns=searchable_columns
+                                                        group_by=group_by,
+                                                        having=having,
+                                                        limit=None,
                                                         )
 
             # Append the tool result back to the message history
