@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Literal
 from uuid import uuid4
+import os
 
 from fastapi import FastAPI
 from fastapi import HTTPException
@@ -16,19 +17,20 @@ from pydantic import BaseModel
 from rag_module.rag_controller_llama import RAGAction
 from database_module.tabular_data import SUPPORTED_DATASET_EXTENSIONS
 
+
+
 app = FastAPI()
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 WEB_UI_DIR = BASE_DIR / "web_ui"
-CHAT_HISTORY_DIR = BASE_DIR / "chat_history"
 DATA_DIR = BASE_DIR / "data"
-MAX_HISTORY_MESSAGES = 40
 
-# RAG source setting below:
-RAG_NAME = "apple" # manga apple
-RAG_TIMESTAMP = "2026-06-24"
-RAG_INFERENCE_TYPE = None
-RAG_REBUILD = False
+RAG_NAME = os.getenv("RAG_NAME", "")
+RAG_REBUILD = False if os.getenv("RAG_REBUILD") in ("false", "0", None) else True
+MAX_HISTORY_MESSAGES = int(os.getenv("MAX_HISTORY_MESSAGES", 40))
+CHAT_HISTORY_DIR = BASE_DIR / "chat_history" / RAG_NAME
+
+print(f"CLI args in API {RAG_NAME} | {RAG_REBUILD} | {MAX_HISTORY_MESSAGES} | {CHAT_HISTORY_DIR}")
 
 ragc = RAGAction(
     rag_name=RAG_NAME,
@@ -225,7 +227,7 @@ async def chat_api(request: ChatRequest):
         # for chunk in active_ragc.response_handler(request.message, verbose=True, stream=True, chat_history=None):
         #     chunks.append(chunk)
         #     yield chunk
-        for chunk in active_ragc.response_handler_with_tool(request.message, verbose=True, stream=True, chat_history=history, chat_history_limit=4):
+        for chunk in active_ragc.response_handler_with_tool(request.message, verbose=True, stream=True, chat_history=history, chat_history_limit=2):
             chunks.append(chunk)
             yield chunk
 
