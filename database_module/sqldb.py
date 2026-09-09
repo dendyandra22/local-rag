@@ -74,7 +74,7 @@ class SQLDB(RAGDatabase):
         print_log(f"{self.db_name}.db created successfully.")
 
 
-    def search_sql(self, query_filter: str, use_fts: bool, return_context: bool, column_selection: str = None, limit: int = 5):
+    def search_sql(self, query_filter: str, use_fts: bool, return_context: bool, column_selection: str = None, limit: int = None):
 
         # if not self._check_conn():
         #     raise AttributeError(f'{self.db_name} database connection not initiated.')
@@ -99,7 +99,10 @@ class SQLDB(RAGDatabase):
             cursor = conn.cursor()
             try:
                 cursor.execute(query)
-                all_rows = cursor.fetchmany(limit)
+                if limit is None:
+                    all_rows = cursor.fetchall()
+                else:
+                    all_rows = cursor.fetchmany(limit)
 
                 col_list = [desc[0] for desc in cursor.description]
             finally:
