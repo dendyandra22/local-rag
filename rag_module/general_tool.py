@@ -78,15 +78,20 @@ def _get_query_filter(filters: list):
 
     filter_query = []
     for fil in filters:
-        val = fil["value"]
-        op = fil["operator"]
+        col = fil.get("column", None)
+        val = fil.get("value", None)
+        op = fil.get("operator", None)
+
+        if col is None or val is None or op is None:
+            print('[_get_query_filter] SKIP INCOMPLETE FILTER')
+            continue
 
         # handle operation for string value column
         if not is_number(val):
             op = op_convert.get(fil["operator"], "LIKE")
             val = f"""\'%{fil["value"]}%\'"""
 
-        tmp = f'''{fil["column"]} {op} {val}'''
+        tmp = f'''{col} {op} {val}'''
         filter_query.append(tmp)
 
     query = query + ' AND '.join(filter_query).strip()
@@ -110,18 +115,13 @@ def sql_get_by_filter(sqldb, filter_list, limit, searchable_columns, return_cont
 
     return res
 
-def sql_get_basic_aggregation(sqldb, aggregation_list: list[dict], filter_list: list[dict], searchable_columns: list, limit: int, return_context: bool = True):
+def sql_get_basic_aggregation(sqldb, aggregation_list: list[dict], filter_list: list[dict], group_by: list[str], having: dict, limit: int|None, return_context: bool = True):
     """
-    Do basic SQL aggregation like SUM, AVG, COUNT, MIN, MAX.
+    Do basic SQL aggregation like SUM, AVG, COUNT, MIN, MAX. Support GROUP BY and HAVING if needed.
     """
-    # # validate searchable column
-    # tmp = [fil["column"] for fil in filter_list if fil["column"] in searchable_columns]
-    # if len(tmp) == 0:
-    #     raise ValueError(f"Search column invalid! Please search in this column: {searchable_columns}")
-
     limit = limit if limit is not None else 5
 
-    # create AGG query
+    # create AGG query e.g "SELECT SUM(...), ..."
     tmp_query = []
     for agg_data in aggregation_list:
         agg_func = agg_data["aggregation_function"]
@@ -133,8 +133,27 @@ def sql_get_basic_aggregation(sqldb, aggregation_list: list[dict], filter_list: 
 
     agg_query = ", ".join(tmp_query)
 
-    # create condition/filter query
+    # create condition/filter query e.g "WHERE ... = ..."
     query_filter = _get_query_filter(filter_list)
+
+    # create grouping query
+    if group_by:
+        limit = None
+        group_query = " GROUP BY " + ", ".join(group_by)
+
+        # add GROUP BY col to agg_query
+        agg_query = ", ".join(group_by) + ", " + agg_query
+
+        if having:
+            agg_func = having.get("aggregation_function", None)
+            target_col = having.get("target_col", None)
+            operator = having.get("operator", None)
+            value = having.get("value", None)
+
+            if agg_func and target_col and operator and value:
+                group_query += f""" HAVING {agg_func}({target_col}) {operator} {value}"""
+
+        query_filter += group_query
 
     # use column_selection to search_sql since agg is different from basic SQL query
     res = sqldb.search_sql(query_filter,
@@ -269,10 +288,39 @@ def generate_toolcall_schema(columns: list):
                                 "required": ["column", "operator", "value"]
                             }
                         },
-                        "limit": {
-                            "type": "integer",
-                            "description": "The maximum number of rows to return. Default to 10 if the user doesn't specify.",
-                            "default": 10
+                        "group_by": {
+                            "type": "array",
+                            "description": "A list of columns to group the aggregation result.",
+                            "items": {
+                                "type": "string",
+                                "enum": columns
+                            }
+                        },
+                        "having": {
+                            "type": "object",
+                            "description": "A dictionary describing the HAVING condition for GROUP BY.",
+                            "properties": {
+                                "aggregation_function": {
+                                    "type": "string",
+                                    "description": "The type of math to evaluate in HAVING.",
+                                    "enum": ["MIN", "MAX", "AVG", "SUM", "COUNT"]
+                                },
+                                "target_col": {
+                                    "type": "string",
+                                    "description": "The target column for HAVING evaluation.",
+                                    "enum": columns
+                                },
+                                "operator": {
+                                    "type": "string",
+                                    "description": "The comparison operator.",
+                                    "enum": ["=", ">", "<", ">=", "<="]
+                                },
+                                "value": {
+                                    "type": "string",
+                                    "description": "The threshold value to compare against."
+                                }
+                            },
+                            "required": ["aggregation_function", "target_col", "operator", "value"]
                         }
                     },
                     "required": ["aggregation_list"]
