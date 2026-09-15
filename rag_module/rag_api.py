@@ -5,7 +5,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Literal
 from uuid import uuid4
-import os
 
 from fastapi import FastAPI
 from fastapi import HTTPException
@@ -13,31 +12,27 @@ from fastapi.responses import FileResponse
 from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
-# from rag_module.rag_controller import RAGAction
 from rag_module.rag_controller_llama import RAGAction
 from rag_module.config import load_config
-# from database_module.tabular_data import SUPPORTED_DATASET_EXTENSIONS
 
 
 
-def create_api(rag_name: str):
+
+def create_api(rag_name: str, verbose: bool = False):
     config = load_config(f"{rag_name}_config.ini")
 
     base_dir = Path(__file__).resolve().parent.parent
     web_ui_dir = base_dir / "web_ui"
-    data_dir = base_dir / "data"
     
     rag_name = config["RAG"].get('rag_name')
-    # RAG_REBUILD = False if os.getenv("RAG_REBUILD") in ("false", "0", None) else True
     max_history_messages = int(config["LLM"].get('max_history_messages'))
     chat_history_dir = base_dir / "chat_history" / rag_name
 
     app = FastAPI()
-
-    print(f"CLI args in API {rag_name} | {max_history_messages} | {chat_history_dir}")
     
     ragc = RAGAction(
         rag_name=rag_name,
+        verbose=verbose
     )
     rag_lock = threading.Lock()
     active_dataset = {
@@ -61,14 +56,6 @@ def create_api(rag_name: str):
     class ChatHistoryResponse(BaseModel):
         session_id: str
         messages: list[ChatMessage]
-    
-    
-    class DatasetStatusResponse(BaseModel):
-        filename: str | None
-        uploaded_at: str | None
-        db_name: str | None
-        supported_extensions: list[str]
-    
     
     class DatasetUpload(BaseModel):
         file_path: str
@@ -125,37 +112,7 @@ def create_api(rag_name: str):
         with tmp_path.open("w", encoding="utf-8") as file:
             json.dump(payload, file, ensure_ascii=False, indent=2)
         tmp_path.replace(path)
-    
-    
-    # def _safe_upload_filename(file_path: str) -> Path:
-    #     if file_path == "":
-    #         raise HTTPException(status_code=400, detail="File path is empty")
-    #
-    #     original = Path(file_path)
-    #     extension = original.suffix.lower()
-    #
-    #     if extension not in SUPPORTED_DATASET_EXTENSIONS:
-    #         supported = ", ".join(sorted(SUPPORTED_DATASET_EXTENSIONS))
-    #         raise HTTPException(
-    #             status_code=400,
-    #             detail=f"Unsupported dataset file type. Use one of: {supported}",
-    #         )
-    #
-    #     # stem = Path(original).stem
-    #     # stem = re.sub(r"[^A-Za-z0-9_.-]+", "_", stem).strip("._-") or "dataset"
-    #     # stem = stem.encode('utf-8').hex()
-    #     # return f"{stem}"
-    #     return original
-    
-    
-    # def _rebuild_rag_from_dataset(source_path: Path, save_path: Path) -> None:
-    #     global ragc
-    #
-    #     ragc = RAGController()
-    
-    
-    
-    
+
     @app.get("/health")
     def health():
         return {"status": "ok"}
@@ -174,42 +131,8 @@ def create_api(rag_name: str):
             "messages": _load_history(session_id),
         }
     
-    
-    # @app.get("/dataset", response_model=DatasetStatusResponse)
-    # def get_dataset_status():
-    #     return {
-    #         **active_dataset,
-    #         "supported_extensions": sorted(SUPPORTED_DATASET_EXTENSIONS),
-    #     }
-    
-    
     @app.post("/dataset", response_model=DatasetUpload)
     async def upload_dataset(item: DatasetUpload):
-    
-        # source_path = _safe_upload_filename(item.file_path or "")
-        # data_dir.mkdir(exist_ok=True)
-        # # saved_path = data_dir / source_path.name
-        #
-        # print('source_path', source_path)
-        #
-        #
-        # try:
-        #         with rag_lock:
-        #             ragc = _rebuild_rag_from_dataset(source_path, saved_path)
-        #     #
-        #     active_dataset.update({
-        #         "filename": str(source_path.name),
-        #         "uploaded_at": datetime.now(timezone.utc).isoformat(),
-        #         "db_name": str(source_path.stem),
-        #     })
-    
-        # except ValueError as exc:
-        #     # saved_path.unlink(missing_ok=True)
-        #     raise HTTPException(status_code=400, detail=str(exc)) from exc
-        # except Exception as exc:
-        #     # saved_path.unlink(missing_ok=True)
-        #     raise HTTPException(status_code=500, detail=f"Could not load dataset: {exc}") from exc
-        #
         return {
             "file_path": "Unavailable",
             "uploaded_at": active_dataset["uploaded_at"],
@@ -225,11 +148,8 @@ def create_api(rag_name: str):
             chunks = []
             with rag_lock:
                 active_ragc = ragc
-    
-            # for chunk in active_ragc.response_handler(request.message, verbose=True, stream=True, chat_history=None):
-            #     chunks.append(chunk)
-            #     yield chunk
-            for chunk in active_ragc.response_handler_with_tool(request.message, verbose=True, stream=True, chat_history=history, chat_history_limit=2):
+
+            for chunk in active_ragc.response_handler_with_tool(request.message, chat_history=history, chat_history_limit=2):
                 chunks.append(chunk)
                 yield chunk
     

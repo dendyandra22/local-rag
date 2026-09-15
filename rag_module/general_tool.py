@@ -1,5 +1,5 @@
 import json
-
+from util.logger import print_log
 
 def _get_query_search_column(column: str, values: str | list[str], operator: str):
     query_filter = ""
@@ -17,7 +17,8 @@ def sql_get_by_columns(sqldb,
                     operator: str = "and",
                     use_fts=True,
                     return_context=True,
-                    limit: int = 5
+                    limit: int = 5,
+                    verbose: bool = False
                     ):
     """
     Finds data matching a combination of specific columns and value mentioned by users.
@@ -25,10 +26,6 @@ def sql_get_by_columns(sqldb,
     CRITICAL: Only provide arguments that the user EXPLICITLY mentioned in their prompt.
     DO NOT guess, hallucinate, or assume these values if they aren't provided by the user.
     """
-
-    # if all(param is None for key, param in args.items()):
-    # # if all(param not in ["title", "genres", "authors", "themes"] for param in args.keys()):
-    #     raise AttributeError("params value is empty! fill at least one of it")
 
     operator = "AND" if operator in ["AND", "and"] else "OR"
     query_filter = "\'"
@@ -39,7 +36,6 @@ def sql_get_by_columns(sqldb,
         if value is not None:
             search_filter[col] = value
 
-    print("search_filter",search_filter)
     for column, value in search_filter.items():
 
         if query_filter == "\'":
@@ -61,7 +57,7 @@ def sql_get_by_columns(sqldb,
     return res
 
 
-def _get_query_filter(filters: list):
+def _get_query_filter(filters: list, verbose: bool = False):
     """
     Make a SQL query for filters search.
     """
@@ -83,7 +79,7 @@ def _get_query_filter(filters: list):
         op = fil.get("operator", None)
 
         if col is None or val is None or op is None:
-            print('[_get_query_filter] SKIP INCOMPLETE FILTER')
+            if verbose: print_log('[_get_query_filter] SKIP INCOMPLETE FILTER')
             continue
 
         # handle operation for string value column
@@ -95,12 +91,11 @@ def _get_query_filter(filters: list):
         filter_query.append(tmp)
 
     query = query + ' AND '.join(filter_query).strip()
-    # query += f" LIMIT {limit}"
     return query
 
-def sql_get_by_filter(sqldb, filter_list, limit, searchable_columns, return_context=True):
+def sql_get_by_filter(sqldb, filter_list, limit, searchable_columns, return_context=True, verbose: bool = False):
     """
-    Find data by matching filter in columns.
+    Filters the dataset based on conditions (like greater than, less than, or equals) and returns a specific number of rows.
     """
 
     # validate searchable column
@@ -110,12 +105,12 @@ def sql_get_by_filter(sqldb, filter_list, limit, searchable_columns, return_cont
 
     limit = limit if limit is not None else 5
 
-    query_filter = _get_query_filter(filter_list)
-    res = sqldb.search_sql(query_filter, limit=limit, use_fts=False, return_context=return_context)
+    query_filter = _get_query_filter(filter_list, verbose)
+    res = sqldb.search_sql(query_filter, limit=limit, use_fts=False, return_context=return_context, verbose=verbose)
 
     return res
 
-def sql_get_basic_aggregation(sqldb, aggregation_list: list[dict], filter_list: list[dict], group_by: list[str], having: dict, limit: int|None, return_context: bool = True):
+def sql_get_basic_aggregation(sqldb, aggregation_list: list[dict], filter_list: list[dict], group_by: list[str], having: dict, limit: int|None, return_context: bool = True, verbose: bool = False):
     """
     Do basic SQL aggregation like SUM, AVG, COUNT, MIN, MAX. Support GROUP BY and HAVING if needed.
     """
@@ -160,7 +155,9 @@ def sql_get_basic_aggregation(sqldb, aggregation_list: list[dict], filter_list: 
                            column_selection=agg_query,
                            limit=limit,
                            use_fts=False,
-                           return_context=return_context)
+                           return_context=return_context,
+                           verbose=verbose
+                           )
 
     return res
 

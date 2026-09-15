@@ -21,7 +21,6 @@ class SQLDB(RAGDatabase):
 
         else:
             self.db_path = None
-            # print_log(f"{self.db_name}.db does not exist.")
             raise FileNotFoundError(f"{self.db_name}.db does not exist.")
 
     def create_db(self, df: pd.DataFrame):
@@ -31,7 +30,7 @@ class SQLDB(RAGDatabase):
             print_log(f"creating SQL DB {self.db_name}.db")
             self.db_path = DATABASE_PATH / f"{self.db_name}.db"
 
-        print('total rows SQLDB:', df.shape[0])
+        print_log(f"total rows SQLDB: {df.shape[0]}")
         Path("data").mkdir(exist_ok=True)
         conn = sqlite3.connect(self.db_path)
         df.to_sql(self.db_name, conn, if_exists="replace", index=False)
@@ -53,31 +52,15 @@ class SQLDB(RAGDatabase):
             column_query = column_query[:-1]
         cursor.execute(f"CREATE VIRTUAL TABLE IF NOT EXISTS {self.db_name}_fts USING fts5({column_query});")
 
-        # cursor.execute(f"CREATE VIRTUAL TABLE IF NOT EXISTS {self.db_name}_fts USING fts5(\
-        #                mal_id UNINDEXED, title, title_english, type, chapters UNINDEXED, \
-        #                volumes UNINDEXED, status, published_from, published_to, score UNINDEXED, \
-        #                authors, genres, themes, synopsis\
-        #                );")
-
         # copy existing data into the new FTS table
         column_query = ', '.join(df.columns.tolist())
         cursor.execute(f"INSERT INTO {self.db_name}_fts({column_query}) SELECT {column_query} FROM {self.db_name};")
-        # cursor.execute(f"INSERT INTO {self.db_name}_fts(mal_id, title, title_english, type, chapters, volumes, status,\
-        #  published_from, published_to, score, authors, genres, themes, synopsis) SELECT mal_id, title, \
-        #  title_english, type, chapters, volumes, status, published_from, published_to, score, authors, \
-        #  genres, themes, synopsis \
-        #  FROM {self.db_name};")
         conn.commit()
 
-        # self.conn = conn
-        # self.created_at = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         print_log(f"{self.db_name}.db created successfully.")
 
 
-    def search_sql(self, query_filter: str, use_fts: bool, return_context: bool, column_selection: str = None, limit: int = None):
-
-        # if not self._check_conn():
-        #     raise AttributeError(f'{self.db_name} database connection not initiated.')
+    def search_sql(self, query_filter: str, use_fts: bool, return_context: bool, column_selection: str = None, limit: int = None, verbose: bool = False):
 
         column_selection = column_selection if column_selection else "*"
 
@@ -87,14 +70,11 @@ class SQLDB(RAGDatabase):
             query = f'''
             SELECT {column_selection} FROM {self.db_name}_fts
             WHERE {self.db_name}_fts MATCH ''' + query_filter
-            # context = ''
-
 
         else:
             query = f'''SELECT {column_selection} FROM {self.db_name} ''' + query_filter
-            # context = ''
 
-        print('XXX SQL QUERY\n', query)
+        if verbose: print_log(f"SQL query: {query}")
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
             try:
