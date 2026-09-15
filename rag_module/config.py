@@ -1,32 +1,53 @@
 import argparse
 import configparser
 from pathlib import Path
+import re
 
 from util.logger import print_log
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 PROJECT_DIR = BASE_DIR / "dataset" # temp project dir is dataset
 
+def config_sep2list(value: str):
+    if value in ["",None,"None"]:
+        return []
+
+    result = [
+        f.strip()
+        for f in value.split(", ")
+    ]
+
+    return result
+
 def load_config(config_name: Path | str):
     if isinstance(config_name, str):
         config_name = Path(config_name)
     if config_name.suffix == "":
         config_name = config_name.with_suffix(".ini")
-    print("ododd",config_name)
+
     config_path = Path(PROJECT_DIR / config_name)
     if not config_path.is_file():
         print(f"Config file not found: {config_path}")
-        raise FileNotFoundError(f"{config_path.stem}{config_path.suffix} not found in dataset directory.")
+        raise FileNotFoundError(f"{config_path.stem}{config_path.suffix} not found in dataset directory. Please create RAG first.")
 
     config = configparser.ConfigParser()
     config.read(config_path)
     print_log(f"Loading base config: {config_path.stem}{config_path.suffix}")
     return config
 
-def generate_config(config_name: Path):
+def generate_config(config_name: Path | str):
     """
     Generate the config file for RAG chatbot.
+
+    Args:
+        config_name: Config filename.
     """
+
+    def normalize_column_name(name: str) -> str:
+        name = re.sub(r"[\s\-]+", "_", str(name).strip())
+        name = re.sub(r"[^a-zA-Z0-9_]", "", name)
+        name = re.sub(r"_+", "_", name)
+        return name.strip("_")
 
     base_config = load_config(config_name)
 
@@ -35,6 +56,15 @@ def generate_config(config_name: Path):
 
     base_config["DATASET"]["path"] = f"{PROJECT_DIR}/{base_config['DATASET'].get('path')}"
     base_config["DATASET"]["max_rows"] = base_config['DATASET'].get("max_rows", "None")
+
+    tmp_col = base_config['DATASET'].get("main_columns", "None")
+    tmp_col = ", ".join([normalize_column_name(col) for col in config_sep2list(tmp_col)])
+    base_config["DATASET"]["main_columns"] = tmp_col.strip()
+
+    tmp_col = base_config['DATASET'].get("drop_columns", "None")
+    tmp_col = ", ".join([normalize_column_name(col) for col in config_sep2list(tmp_col)])
+    base_config["DATASET"]["drop_columns"] = tmp_col.strip()
+
     base_config["LLM"] = {
         "model_name": "Qwen2.5-3B-Instruct-Q4_K_M.gguf",
         "n_ctx": 8096,
@@ -82,7 +112,6 @@ def generate_config(config_name: Path):
 if '__main__' == __name__:
     parser = argparse.ArgumentParser()
     parser.add_argument("-n", "--name", help="path to base_config.cfg", required=True)
-    # parser.add_argument("-o", "--output", help="output path to for exporting config file", required=True)
 
     args = parser.parse_args()
     generate_config(Path(args.name))
