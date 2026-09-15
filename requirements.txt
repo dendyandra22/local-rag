@@ -8,3 +8,4 @@ scikit-learn
 sklearn-crfsuite
 fastapi[standard]
 annotated-types
+openpyxl
