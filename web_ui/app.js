@@ -90,8 +90,8 @@ function renderEmptyState() {
   messagesEl.innerHTML = `
     <div class="empty-state">
       <div class="empty-icon">R</div>
-      <h2>What manga are we exploring?</h2>
-      <p>Ask for recommendations, authors, ratings, genres, or similar titles from your local RAG database.</p>
+      <h2>What data are we exploring?</h2>
+      <p>Ask for title, type, category, or aggregate data from your local RAG database.</p>
     </div>
   `;
 }

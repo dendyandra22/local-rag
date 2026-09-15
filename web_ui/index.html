@@ -26,29 +26,10 @@
           <p class="sidebar-label">Try asking</p>
 <button class="prompt-chip" type="button">Hey who are you?</button>
           <button class="prompt-chip" type="button">What is ReLife manga?</button>
-          <button class="prompt-chip" type="button">Recommend manga like Yuru Yuri</button>
-          <button class="prompt-chip" type="button">Who wrote Friend Girlfriend?</button>
-          <button class="prompt-chip" type="button">Give me action manga recommendations</button>
+          <button class="prompt-chip" type="button">Show me 5 title only that contain "OJK" word</button>
+          <button class="prompt-chip" type="button">Show me apps with genres Games and have rating above 3.5 with type paid</button>
+          <button class="prompt-chip" type="button">How many unique values in Media Name?</button>
         </div>
-
-<!--        <div class="sidebar-section dataset-section">-->
-<!--          <p class="sidebar-label">Dataset</p>-->
-<!--          <label class="dataset-picker">-->
-<!--            <input id="datasetInput" type="file" accept=".csv,.xls,.xlsx">-->
-<!--            <span id="datasetFileName">Choose CSV or Excel file</span>-->
-<!--          </label>-->
-<!--          <input-->
-<!--            id="datasetPathInput"-->
-<!--            class="dataset-path-input"-->
-<!--            type="text"-->
-<!--            placeholder="dataset/manga_dataset.csv"-->
-<!--            autocomplete="off"-->
-<!--          >-->
-<!--          <button id="datasetUploadButton" class="dataset-upload-button" type="button">-->
-<!--            Send path-->
-<!--          </button>-->
-<!--          <p id="datasetStatus" class="dataset-status">Using startup dataset</p>-->
-<!--        </div>-->
 
         <div class="status-panel">
           <span id="statusDot" class="status-dot"></span>
@@ -67,8 +48,8 @@
         <section id="messages" class="messages" aria-live="polite">
           <div class="empty-state">
             <div class="empty-icon">R</div>
-            <h2>What manga are we exploring?</h2>
-            <p>Ask for recommendations, authors, ratings, genres, or similar titles from your local RAG database.</p>
+            <h2>What data are we exploring?</h2>
+            <p>Ask for title, type, category, or aggregate data from your local RAG database.</p>
           </div>
         </section>
 
@@ -77,7 +58,7 @@
             id="messageInput"
             name="message"
             rows="1"
-            placeholder="Message Manga RAG..."
+            placeholder="Message Local RAG..."
             autocomplete="off"
           ></textarea>
           <button id="sendButton" type="submit" aria-label="Send message">
