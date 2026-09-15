@@ -21,28 +21,3 @@ class RAGDatabase:
             return False
         else:
             return True
-
-
-# class RAGDB:
-#     def __init__(self, db_name, rebuild_db):
-#         self.db_name = db_name
-#         if rebuild_db:
-#             self.sqm, self.vectordb = self._build_ragdb()
-#
-#         else:
-#             self.sqm, self.vectordb = self._load_db()
-#
-#
-#
-#     def _build_ragdb(self):
-#         sql = SQLDB().create_db(df)
-#
-#         vecdb = VectorDB().create_db(df)
-#
-#         return sql, vecdb
-#
-#     def _load_db(self):
-#         sql = SQLDB().connect_db(self.db_name)
-#         vecdb = VectorDB().connect_db(self.db_name)
-#
-#         return sql, vecdb
